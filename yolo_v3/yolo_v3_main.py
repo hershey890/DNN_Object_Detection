@@ -83,21 +83,22 @@ def decode_netout(netout, anchors, obj_thresh, net_h, net_w):
     return boxes
 
 
-def correct_yolo_boxes(boxes, image_h, image_w, net_h, net_w, scale_fact):
+def correct_yolo_boxes(boxes, image_h, image_w, net_h, net_w, scale_fact, x_greater_y):
     new_w, new_h = net_w, net_h
+    print(image_w, image_h, net_w, net_h, x_greater_y)
     for i in range(len(boxes)):
         x_offset, x_scale = (net_w - new_w) / 2. / net_w, float(new_w) / net_w
         y_offset, y_scale = (net_h - new_h) / 2. / net_h, float(new_h) / net_h
-        boxes[i].xmin = int((boxes[i].xmin - x_offset) / x_scale * image_w)
-        boxes[i].xmax = int((boxes[i].xmax - x_offset) / x_scale * image_w)
-        boxes[i].ymin = int((boxes[i].ymin - y_offset) / y_scale * image_h)
-        boxes[i].ymax = int((boxes[i].ymax - y_offset) / y_scale * image_h)
-
-        # boxes[i].xmin = int(boxes[i].xmin * scale_fact / net_w)
-        # boxes[i].xmax = int(boxes[i].xmax * scale_fact / net_w)
-        # boxes[i].ymin = int(boxes[i].ymin * scale_fact / net_h)
-        # boxes[i].ymax = int(boxes[i].ymax * scale_fact / net_h)
-
+        if x_greater_y:
+            boxes[i].xmin = int((boxes[i].xmin - x_offset) / x_scale * image_w)
+            boxes[i].xmax = int((boxes[i].xmax - x_offset) / x_scale * image_w)
+            boxes[i].ymin = int((boxes[i].ymin - y_offset) / x_scale * image_w)
+            boxes[i].ymax = int((boxes[i].ymax - y_offset) / x_scale * image_w)
+        else:
+            boxes[i].xmin = int((boxes[i].xmin - x_offset) / y_scale * image_h)
+            boxes[i].xmax = int((boxes[i].xmax - x_offset) / y_scale * image_h)
+            boxes[i].ymin = int((boxes[i].ymin - y_offset) / y_scale * image_h)
+            boxes[i].ymax = int((boxes[i].ymax - y_offset) / y_scale * image_h)
 
 def _interval_overlap(interval_a, interval_b):
     x1, x2 = interval_a
@@ -151,31 +152,37 @@ Arguments:
 def image_rescale(img, dst_dims=0):
     # y_len, x_len = img.size
     y_len, x_len = img.shape[:2]
+    x_greater_y = True
     if x_len >= y_len:
         scale = 416/x_len
         img = cv2.resize(img, (416, int(scale*y_len)), interpolation=cv2.INTER_AREA)
+        # copyMakeBorder - top, bottom, left, right
         img = cv2.copyMakeBorder(img, 0, int(416 - scale*y_len)+1, 0, 0, cv2.BORDER_CONSTANT, None, 0)
     else:
         scale = 416/y_len
         img = cv2.resize(img, (int(scale*x_len), 416), interpolation=cv2.INTER_AREA)
         img = cv2.copyMakeBorder(img, 0, 0, 0, int(416 - scale*x_len)+1, cv2.BORDER_CONSTANT, None, 0)
+        x_greater_y = False
     # return shift and use in box
-    return img, scale
+    return img, scale, x_greater_y
+
+
 
 
 # load and prepare an image
 # TODO: make output_w, output_h configurable, not just 416
 def load_image_pixels(filename, output_w=416, output_h=416):
     image = np.float32(np.flip(cv2.imread(filename), axis=2))
-    input_w, input_h = image.shape[:2]
+    input_h, input_w = image.shape[:2]
     img_scale = 0
+    x_greater_y = True
     if input_w != output_w or input_h != output_h:
-        image, img_scale = image_rescale(image)
-    output_w, output_h = image.shape[:2]
+        image, img_scale, x_greater_y = image_rescale(image)
+    output_h, output_w = image.shape[:2]
     image /= 255.0
     # add a dimension so that we have one sample
     image = expand_dims(image, 0)
-    return image, input_w, input_h, output_w, output_h, img_scale
+    return image, input_w, input_h, output_w, output_h, img_scale, x_greater_y
 
 
 # get all of the results above a threshold
@@ -242,8 +249,7 @@ def _main_(args):
     # define the expected input shape for the model
     # input_w, input_h = 416, 416
     # define our new photo
-    image, input_w, input_h, image_w, image_h, img_scaling = load_image_pixels(image_path)
-    input_w, input_h = image_w, image_h
+    image, input_img_w, input_img_h, output_img_w, output_img_h, img_scaling, x_greater_y = load_image_pixels(image_path)
     yhat = model.predict(image)
     # summarize the shape of the list of arrays
     print([a.shape for a in yhat])
@@ -254,9 +260,9 @@ def _main_(args):
     boxes = list()
     for i in range(len(yhat)):
         # decode the output of the network
-        boxes += decode_netout(yhat[i][0], anchors[i], class_threshold, input_h, input_w)
+        boxes += decode_netout(yhat[i][0], anchors[i], class_threshold, output_img_h, output_img_w)
     # correct the sizes of the bounding boxes for the shape of the image
-    correct_yolo_boxes(boxes, image_h, image_w, input_h, input_w, img_scaling)
+    correct_yolo_boxes(boxes, input_img_h, input_img_w, output_img_h, output_img_w, img_scaling, x_greater_y)
     # suppress non-maximal boxes
     do_nms(boxes, 0.5)
     # define the labels
