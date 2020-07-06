@@ -3,6 +3,7 @@
 # TODO: code optimization for speed
 # TODO: make a module to run on videos by temporarily caching n, 416, 416, 3 chunks
 # TODO: make a function/class to pre-process dataset into required size and save it as a file
+# TODO: add flag to indicate if all inputs are of same size
 
 import sys
 sys.path.append('C:/Users/Hersh/Anaconda3/Lib/site-packages')
@@ -16,7 +17,12 @@ import warnings
 import matplotlib.pyplot as plt
 warnings.filterwarnings('ignore')
 import cv2
+import tensorflow as tf
 
+gpus = tf.config.experimental.list_physical_devices('GPU')
+for gpu in gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 class BoundBox:
     def __init__(self, xmin, ymin, xmax, ymax, objness=None, classes=None):
@@ -167,9 +173,6 @@ def load_image_pixels(filename, output_w=416, output_h=416):
         image, img_scale = image_rescale(image)
     output_w, output_h = image.shape[:2]
     image /= 255.0
-    # plt.imshow(image)
-    # plt.title(image.shape)
-    # plt.show()
     # add a dimension so that we have one sample
     image = expand_dims(image, 0)
     return image, input_w, input_h, output_w, output_h, img_scale
